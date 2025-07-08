@@ -7,11 +7,14 @@ import 'package:mime/mime.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter_sound/flutter_sound.dart';
-import 'package:flutter_sound/public/flutter_sound_recorder.dart';
-import 'package:flutter_sound_platform_interface/flutter_sound_recorder_platform_interface.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:chat_bubbles/chat_bubbles.dart';
+import 'package:audio_waveforms/audio_waveforms.dart' as audio_waveforms;
 import 'dart:io';
+import 'dart:async';
+
+// Import our custom AudioRecorderWidget
+import '../widgets/audio_recorder_widget.dart';
 
 class ChatScreen extends StatefulWidget {
   final String groupId;
@@ -312,14 +315,78 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _handleVoiceMessage() async {
-    if (_isRecording) {
-      await _stopRecording();
-    } else {
-      await _startRecording();
+    // Check microphone permission first
+    final hasPermission = await _checkMicrophonePermission();
+    if (!hasPermission) {
+      return;
     }
+    
+    // Show the audio recorder in a modal bottom sheet
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).viewInsets.bottom,
+        ),
+        child: FractionallySizedBox(
+          heightFactor: 0.6,
+          child: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 16.0),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 16),
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[300],
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  Expanded(
+                    child: AudioRecorderWidget(
+                      onRecordingComplete: (path, duration) {
+                        // Create and add the audio message
+                        if (path.isNotEmpty && File(path).existsSync()) {
+                          final file = File(path);
+                          final size = file.lengthSync();
+                          
+                          final message = types.AudioMessage(
+                            author: types.User(id: widget.currentUserId),
+                            createdAt: DateTime.now().millisecondsSinceEpoch,
+                            duration: duration,
+                            id: _uuid.v4(),
+                            name: 'Voice Message',
+                            size: size,
+                            uri: path,
+                          );
+                          
+                          _addMessage(message);
+                          Navigator.pop(context);
+                        }
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   void _addMessage(types.Message message) {
+    // Stop any currently playing audio when adding a new message
+    _stopAllAudioPlayback();
+    
     setState(() {
       _messages.insert(0, message);
     });
@@ -330,6 +397,26 @@ class _ChatScreenState extends State<ChatScreen> {
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeOut,
       );
+    }
+  }
+  
+  void _stopAllAudioPlayback() {
+    // Access the static members from the AudioMessageBubble state
+    if (_AudioMessageBubbleState._globalPlayingController != null &&
+        _AudioMessageBubbleState._currentlyPlayingBubble != null) {
+      try {
+        _AudioMessageBubbleState._globalPlayingController!.stopPlayer();
+        if (_AudioMessageBubbleState._currentlyPlayingBubble!.mounted) {
+          _AudioMessageBubbleState._currentlyPlayingBubble!.setState(() {
+            _AudioMessageBubbleState._currentlyPlayingBubble!._isPlaying = false;
+            _AudioMessageBubbleState._currentlyPlayingBubble!._position = Duration.zero;
+          });
+        }
+        _AudioMessageBubbleState._globalPlayingController = null;
+        _AudioMessageBubbleState._currentlyPlayingBubble = null;
+      } catch (e) {
+        print('Error stopping audio playback: $e');
+      }
     }
   }
 
@@ -546,32 +633,11 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
       );
     } else if (message is types.AudioMessage) {
-      return Container(
-        margin: const EdgeInsets.only(bottom: 4.0),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          color: isCurrentUser ? const Color(0xFF4F46E5) : Colors.grey[200],
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              icon: Icon(
-                Icons.play_arrow,
-                color: isCurrentUser ? Colors.white : Colors.black87,
-              ),
-              onPressed: () => _playAudio(message),
-            ),
-            const SizedBox(width: 8),
-            Text(
-              'Voice Message',
-              style: TextStyle(
-                color: isCurrentUser ? Colors.white : Colors.black87,
-              ),
-            ),
-          ],
-        ),
+      return AudioMessageBubble(
+        audioPath: message.uri,
+        isCurrentUser: isCurrentUser,
+        backgroundColor: isCurrentUser ? const Color(0xFF4F46E5) : Colors.grey[200]!,
+        waveColor: isCurrentUser ? Colors.white : Colors.black87,
       );
     } else {
       return Container(); // Fallback for unsupported message types
@@ -755,13 +821,12 @@ class _ChatScreenState extends State<ChatScreen> {
                 child: _messageController.text.trim().isEmpty
                     ? GestureDetector(
                         key: const ValueKey('soundwave'),
-                        onLongPress: _startRecording,
-                        onLongPressEnd: (_) => _stopRecording(),
+                        onTap: _handleVoiceMessage,  // Changed to use our new modal recording UI
                         child: CircleAvatar(
                           radius: 22,
-                          backgroundColor: _isRecording ? Colors.red : const Color(0xFF4F46E5),
+                          backgroundColor: const Color(0xFF4F46E5),
                           child: Icon(
-                            _isRecording ? Icons.mic : Icons.graphic_eq,
+                            Icons.mic,
                             color: Colors.white,
                             size: 20,
                           ),
@@ -805,6 +870,461 @@ class FullScreenImagePage extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class AudioMessageBubble extends StatefulWidget {
+  final String audioPath;
+  final bool isCurrentUser;
+  final Color backgroundColor;
+  final Color waveColor;
+
+  const AudioMessageBubble({
+    Key? key,
+    required this.audioPath,
+    required this.isCurrentUser,
+    required this.backgroundColor,
+    required this.waveColor,
+  }) : super(key: key);
+
+  @override
+  State<AudioMessageBubble> createState() => _AudioMessageBubbleState();
+}
+
+class _AudioMessageBubbleState extends State<AudioMessageBubble> {
+  audio_waveforms.PlayerController? _playerController;
+  Duration _duration = Duration.zero;
+  Duration _position = Duration.zero;
+  bool _isPlaying = false;
+  bool _isInitialized = false;
+  bool _isLoading = true;
+  bool _isDisposed = false;
+  bool _canReplay = true;
+  
+  // Static controller to manage global playback state
+  static audio_waveforms.PlayerController? _globalPlayingController;
+  static _AudioMessageBubbleState? _currentlyPlayingBubble;
+  static String? _currentlyPlayingPath;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeController();
+  }
+  
+  @override
+  void didUpdateWidget(AudioMessageBubble oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // If the audio path changes, reinitialize the controller
+    if (oldWidget.audioPath != widget.audioPath) {
+      _disposeCurrentController();
+      _initializeController();
+    }
+  }
+  
+  void _disposeCurrentController() {
+    if (_globalPlayingController == _playerController) {
+      _globalPlayingController = null;
+      _currentlyPlayingBubble = null;
+    }
+    _playerController?.dispose();
+    _playerController = null;
+    _isInitialized = false;
+    _isLoading = true;
+    _isPlaying = false;
+    _position = Duration.zero;
+  }
+  
+  Future<void> _resetPlayerToStart() async {
+    if (_playerController != null && !_isDisposed) {
+      try {
+        await _playerController!.seekTo(0);
+        if (mounted) {
+          setState(() {
+            _position = Duration.zero;
+            _isPlaying = false;
+          });
+        }
+      } catch (e) {
+        print('Error resetting player: $e');
+      }
+    }
+  }
+  
+  Future<void> _handlePlayPause() async {
+    if (_playerController == null || _isDisposed) return;
+    
+    try {
+      if (_isPlaying) {
+        // Pause current playback
+        await _playerController!.pausePlayer();
+        setState(() {
+          _isPlaying = false;
+        });
+      } else {
+        // Stop any other audio that might be playing
+        await _stopOtherAudio();
+        
+        // If this controller is not initialized, reinitialize
+        if (!_isInitialized) {
+          print('Reinitializing controller for replay: ${widget.audioPath}');
+          _createNewController();
+          // Wait for initialization
+          await Future.delayed(Duration(milliseconds: 500));
+          if (!_isInitialized) {
+            print('Controller failed to initialize');
+            return;
+          }
+        }
+        
+        // Start playback
+        await _playerController!.seekTo(0);
+        await _playerController!.startPlayer();
+        
+        // Update global state
+        _globalPlayingController = _playerController;
+        _currentlyPlayingBubble = this;
+        _currentlyPlayingPath = widget.audioPath;
+        
+        setState(() {
+          _isPlaying = true;
+          _position = Duration.zero;
+          _canReplay = false;
+        });
+      }
+    } catch (e) {
+      print('Error in play/pause: $e');
+      // Reset state on error
+      if (mounted && !_isDisposed) {
+        setState(() {
+          _isPlaying = false;
+          _position = Duration.zero;
+          _canReplay = true;
+        });
+        // Try to reinitialize on next attempt
+        _createNewController();
+      }
+    }
+  }
+  
+  Future<void> _stopOtherAudio() async {
+    if (_globalPlayingController != null && 
+        _globalPlayingController != _playerController &&
+        _currentlyPlayingBubble != null) {
+      try {
+        await _globalPlayingController!.stopPlayer();
+        if (_currentlyPlayingBubble!.mounted) {
+          _currentlyPlayingBubble!.setState(() {
+            _currentlyPlayingBubble!._isPlaying = false;
+            _currentlyPlayingBubble!._position = Duration.zero;
+            _currentlyPlayingBubble!._canReplay = true;
+          });
+        }
+      } catch (e) {
+        print('Error stopping other audio: $e');
+      }
+      _globalPlayingController = null;
+      _currentlyPlayingBubble = null;
+      _currentlyPlayingPath = null;
+    }
+  }
+
+  void _initializeController() {
+    // Delay the controller initialization to avoid MediaQuery issues
+    Future.microtask(() {
+      if (mounted && !_isDisposed) {
+        _createNewController();
+      }
+    });
+  }
+  
+  void _createNewController() {
+    _disposeCurrentController();
+    setState(() {
+      _playerController = audio_waveforms.PlayerController();
+      _isLoading = true;
+      _isInitialized = false;
+      _canReplay = true;
+    });
+    _preparePlayer();
+  }
+
+  void _preparePlayer() async {
+    if (_playerController == null || _isDisposed) return;
+    
+    // Validate that the audio file exists
+    if (!File(widget.audioPath).existsSync()) {
+      print('Audio file does not exist: ${widget.audioPath}');
+      if (mounted && !_isDisposed) {
+        setState(() {
+          _isLoading = false;
+          _isInitialized = false;
+        });
+      }
+      return;
+    }
+    
+    try {
+      // Initialize the player with the audio file
+      await _playerController!.preparePlayer(
+        path: widget.audioPath,
+        shouldExtractWaveform: true,
+        noOfSamples: 300, // More samples for smoother animation
+        volume: 1.0,
+      );
+
+      // Get audio duration
+      final durationMillis = await _playerController!.getDuration();
+      if (mounted && !_isDisposed) {
+        setState(() {
+          _duration = Duration(milliseconds: durationMillis ?? 0);
+          _isInitialized = true;
+          _isLoading = false;
+        });
+      }
+
+      // Listen to player state changes
+      _playerController!.onPlayerStateChanged.listen((state) {
+        if (mounted && !_isDisposed) {
+          setState(() {
+            _isPlaying = state == audio_waveforms.PlayerState.playing;
+            
+            // Update global state
+            if (_isPlaying) {
+              _globalPlayingController = _playerController;
+              _currentlyPlayingBubble = this;
+            } else if (_globalPlayingController == _playerController) {
+              _globalPlayingController = null;
+              _currentlyPlayingBubble = null;
+            }
+          });
+        }
+      });
+
+      // Listen to current position
+      _playerController!.onCurrentDurationChanged.listen((duration) {
+        if (mounted && !_isDisposed) {
+          setState(() {
+            _position = Duration(milliseconds: duration);
+          });
+        }
+      });
+
+      // When playback completes
+      _playerController!.onCompletion.listen((_) {
+        if (mounted && !_isDisposed) {
+          print('Audio playback completed for: ${widget.audioPath}');
+          
+          // Clear global state when playback completes
+          if (_globalPlayingController == _playerController) {
+            _globalPlayingController = null;
+            _currentlyPlayingBubble = null;
+            _currentlyPlayingPath = null;
+          }
+          
+          setState(() {
+            _isPlaying = false;
+            _position = Duration.zero;
+            _canReplay = true;
+          });
+          
+          // Just reset to beginning, don't recreate controller
+          Future.delayed(Duration(milliseconds: 100), () {
+            if (mounted && !_isDisposed && _playerController != null) {
+              try {
+                _playerController!.seekTo(0);
+              } catch (e) {
+                print('Error seeking to start: $e');
+                // Only recreate if seek fails
+                _createNewController();
+              }
+            }
+          });
+        }
+      });
+    } catch (e) {
+      print('Error preparing audio player: $e');
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _isInitialized = false;
+        });
+      }
+    }
+  }
+
+  String _formatDuration(Duration duration) {
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
+    final minutes = twoDigits(duration.inMinutes.remainder(60));
+    final seconds = twoDigits(duration.inSeconds.remainder(60));
+    return "$minutes:$seconds";
+  }
+
+  @override
+  void dispose() {
+    _isDisposed = true;
+    _disposeCurrentController();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 4.0),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        color: widget.backgroundColor,
+      ),
+      child: IntrinsicWidth(
+        child: _isLoading 
+            ? _buildLoadingWaveform()
+            : _isInitialized
+                ? _buildPlayableWaveform()
+                : _buildErrorWaveform(),
+      ),
+    );
+  }
+  
+  Widget _buildLoadingWaveform() {
+    return SizedBox(
+      width: 220,
+      height: 40,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          SizedBox(width: 20),
+          SizedBox(
+            width: 24,
+            height: 24,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: widget.waveColor.withOpacity(0.7),
+            ),
+          ),
+          SizedBox(width: 12),
+          Text(
+            "Processing audio...",
+            style: TextStyle(
+              color: widget.waveColor.withOpacity(0.8),
+              fontSize: 14,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  Widget _buildErrorWaveform() {
+    return SizedBox(
+      width: 220,
+      height: 40,
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: widget.waveColor.withOpacity(0.1),
+            ),
+            child: Icon(
+              Icons.error_outline,
+              color: widget.waveColor,
+              size: 20,
+            ),
+          ),
+          SizedBox(width: 12),
+          Text(
+            "Could not load audio",
+            style: TextStyle(
+              color: widget.waveColor.withOpacity(0.8),
+              fontSize: 14,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  Widget _buildPlayableWaveform() {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Play/Pause button
+        GestureDetector(
+          onTap: () async {
+            if (_playerController == null || _isDisposed) return;
+            
+            await _handlePlayPause();
+          },
+          child: Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: widget.waveColor.withOpacity(0.1),
+            ),
+            child: Icon(
+              _isPlaying ? Icons.pause : (_canReplay ? Icons.play_arrow : Icons.refresh),
+              color: widget.waveColor,
+              size: 20,
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        // Waveform
+        Container(
+          width: 120,
+          height: 35,
+          child: _playerController != null && _isInitialized ? ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: audio_waveforms.AudioFileWaveforms(
+                size: Size(120, 35),
+                playerController: _playerController!,
+                enableSeekGesture: true,
+                continuousWaveform: true,
+                playerWaveStyle: audio_waveforms.PlayerWaveStyle(
+                  fixedWaveColor: widget.waveColor.withOpacity(0.4),
+                  liveWaveColor: widget.waveColor,
+                  seekLineColor: widget.waveColor.withOpacity(0.8),
+                  seekLineThickness: 1.5,
+                  showSeekLine: true,
+                  waveThickness: 2,
+                  spacing: 3,
+                  scaleFactor: 80,
+                ),
+              ),
+            ) : Container(
+            width: 120,
+            height: 35,
+            decoration: BoxDecoration(
+              color: widget.waveColor.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Center(
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: widget.waveColor,
+                ),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        // Duration
+        Text(
+          _isPlaying
+            ? _formatDuration(_position)
+            : _formatDuration(_duration),
+          style: TextStyle(
+            color: widget.waveColor.withOpacity(0.7),
+            fontSize: 12,
+          ),
+        ),
+      ],
     );
   }
 }
