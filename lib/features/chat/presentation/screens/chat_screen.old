@@ -1,0 +1,325 @@
+import 'package:flutter/material.dart';
+import 'package:uuid/uuid.dart';
+
+class Message {
+  final String id;
+  final String text;
+  final String senderId;
+  final String senderName;
+  final DateTime timestamp;
+  final bool isCurrentUser;
+
+  Message({
+    required this.id,
+    required this.text,
+    required this.senderId,
+    required this.senderName,
+    required this.timestamp,
+    required this.isCurrentUser,
+  });
+
+  factory Message.fromJson(Map<String, dynamic> json) {
+    return Message(
+      id: json['id'],
+      text: json['text'],
+      senderId: json['senderId'],
+      senderName: json['senderName'],
+      timestamp: DateTime.parse(json['timestamp']),
+      isCurrentUser: json['isCurrentUser'],
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'text': text,
+        'senderId': senderId,
+        'senderName': senderName,
+        'timestamp': timestamp.toIso8601String(),
+        'isCurrentUser': isCurrentUser,
+      };
+}
+
+class ChatScreen extends StatefulWidget {
+  final String groupId;
+  final String groupName;
+  final String currentUserId;
+
+  const ChatScreen({
+    Key? key,
+    required this.groupId,
+    required this.groupName,
+    required this.currentUserId,
+  }) : super(key: key);
+
+  @override
+  State<ChatScreen> createState() => _ChatScreenState();
+}
+
+class _ChatScreenState extends State<ChatScreen> {
+  final TextEditingController _messageController = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
+  final List<Message> _messages = [];
+  final _uuid = const Uuid();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSampleMessages();
+    // Scroll to bottom when messages change
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          0,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _messageController.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _loadSampleMessages() {
+    final sampleMessages = [
+      Message(
+        id: _uuid.v4(),
+        text: 'Hey everyone! Welcome to the group!',
+        senderId: 'user1',
+        senderName: 'Alex',
+        timestamp: DateTime.now().subtract(const Duration(hours: 2)),
+        isCurrentUser: false,
+      ),
+      Message(
+        id: _uuid.v4(),
+        text: 'Thanks for creating the group!',
+        senderId: 'user2',
+        senderName: 'Sam',
+        timestamp: DateTime.now().subtract(const Duration(hours: 1, minutes: 45)),
+        isCurrentUser: false,
+      ),
+      Message(
+        id: _uuid.v4(),
+        text: 'Hey team! I was thinking about our project timeline.',
+        senderId: widget.currentUserId,
+        senderName: 'You',
+        timestamp: DateTime.now().subtract(const Duration(hours: 1, minutes: 30)),
+        isCurrentUser: true,
+      ),
+    ];
+
+    setState(() {
+      _messages.addAll(sampleMessages);
+    });
+  }
+
+  void _handleSendMessage() {
+    final text = _messageController.text.trim();
+    if (text.isEmpty) return;
+
+    final message = Message(
+      id: _uuid.v4(),
+      text: text,
+      senderId: widget.currentUserId,
+      senderName: 'You',
+      timestamp: DateTime.now(),
+      isCurrentUser: true,
+    );
+
+    setState(() {
+      _messages.insert(0, message);
+      _messageController.clear();
+    });
+
+    // Scroll to bottom after sending a message
+    if (_scrollController.hasClients) {
+      _scrollController.animateTo(
+        0,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+      );
+    }
+  }
+
+  Widget _buildMessageBubble(Message message) {
+    final isCurrentUser = message.isCurrentUser;
+    
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4.0, horizontal: 8.0),
+      child: Row(
+        mainAxisAlignment: isCurrentUser ? MainAxisAlignment.end : MainAxisAlignment.start,
+        children: [
+          if (!isCurrentUser)
+            CircleAvatar(
+              backgroundColor: Colors.grey[300],
+              child: Text(
+                message.senderName.isNotEmpty ? message.senderName[0].toUpperCase() : '?',
+                style: const TextStyle(color: Colors.black87),
+              ),
+            ),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Column(
+              crossAxisAlignment: isCurrentUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+              children: [
+                if (!isCurrentUser)
+                  Text(
+                    message.senderName,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                      color: Colors.black54,
+                    ),
+                  ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 10,
+                    horizontal: 14,
+                  ),
+                  decoration: BoxDecoration(
+                    color: isCurrentUser 
+                        ? const Color(0xFF4F46E5) 
+                        : Colors.grey[200],
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    message.text,
+                    style: TextStyle(
+                      color: isCurrentUser ? Colors.white : Colors.black87,
+                      fontSize: 16,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${message.timestamp.hour}:${message.timestamp.minute.toString().padLeft(2, '0')}',
+                  style: const TextStyle(
+                    fontSize: 10,
+                    color: Colors.black54,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        elevation: 1,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.black87),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: Text(
+          widget.groupName,
+          style: const TextStyle(
+            color: Colors.black87,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.more_vert, color: Colors.black87),
+            onPressed: () {
+              // TODO: Implement more options
+            },
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          // Messages list
+          Expanded(
+            child: ListView.builder(
+              controller: _scrollController,
+              reverse: true,
+              padding: const EdgeInsets.symmetric(vertical: 8.0),
+              itemCount: _messages.length,
+              itemBuilder: (context, index) {
+                final message = _messages[index];
+                return _buildMessageBubble(message);
+              },
+            ),
+          ),
+          // Message input
+          Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: 16.0,
+              vertical: 8.0,
+            ),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.grey.withOpacity(0.3),
+                  spreadRadius: 1,
+                  blurRadius: 3,
+                  offset: const Offset(0, -1),
+                ),
+              ],
+            ),
+            child: SafeArea(
+              child: Row(
+                children: [
+                  // Add attachment button
+                  IconButton(
+                    icon: const Icon(Icons.add_circle_outline, color: Color(0xFF4F46E5)),
+                    onPressed: () {
+                      // TODO: Implement attachment
+                    },
+                  ),
+                  // Message input field
+                  Expanded(
+                    child: TextField(
+                      controller: _messageController,
+                      decoration: InputDecoration(
+                        hintText: 'Type a message...',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(24.0),
+                          borderSide: BorderSide.none,
+                        ),
+                        filled: true,
+                        fillColor: Colors.grey[100],
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 20.0,
+                          vertical: 8.0,
+                        ),
+                      ),
+                      textCapitalization: TextCapitalization.sentences,
+                      maxLines: null,
+                      onSubmitted: (_) => _handleSendMessage(),
+                    ),
+                  ),
+                  // Send button
+                  IconButton(
+                    icon: const Icon(Icons.send, color: Color(0xFF4F46E5)),
+                    onPressed: _handleSendMessage,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+                        fontSize: 12,
+                      ),
+                    ),
+                  Text(
+                    message.text,
+                    style: TextStyle(
+                      color: isCurrentUser ? Colors.white : Colors.black87,
+                    ),
+                  ),
+}
