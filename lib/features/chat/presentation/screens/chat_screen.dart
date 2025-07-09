@@ -1274,29 +1274,27 @@ class _AudioMessageBubbleState extends State<AudioMessageBubble> {
         const SizedBox(width: 8),
         // Waveform
         Container(
-          width: 120,
-          height: 35,
-          child: _playerController != null && _isInitialized ? ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: audio_waveforms.AudioFileWaveforms(
-                size: Size(120, 35),
-                playerController: _playerController!,
-                enableSeekGesture: true,
-                continuousWaveform: true,
-                playerWaveStyle: audio_waveforms.PlayerWaveStyle(
-                  fixedWaveColor: widget.waveColor.withOpacity(0.4),
-                  liveWaveColor: widget.waveColor,
-                  seekLineColor: widget.waveColor.withOpacity(0.8),
-                  seekLineThickness: 1.5,
-                  showSeekLine: true,
-                  waveThickness: 2,
-                  spacing: 3,
-                  scaleFactor: 80,
-                ),
+          width: 140,
+          height: 40,
+          child: _playerController != null && _isInitialized ? audio_waveforms.AudioFileWaveforms(
+              size: Size(140, 40),
+              playerController: _playerController!,
+              enableSeekGesture: true,
+              continuousWaveform: true,
+              playerWaveStyle: audio_waveforms.PlayerWaveStyle(
+                fixedWaveColor: widget.waveColor.withOpacity(0.3),
+                liveWaveColor: widget.waveColor,
+                seekLineColor: widget.waveColor,
+                showSeekLine: true,
               ),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8.0),
+                color: widget.waveColor.withOpacity(0.1),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             ) : Container(
-            width: 120,
-            height: 35,
+            width: 140,
+            height: 40,
             decoration: BoxDecoration(
               color: widget.waveColor.withOpacity(0.1),
               borderRadius: BorderRadius.circular(8),
